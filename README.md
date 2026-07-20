@@ -26,12 +26,19 @@ with the weights declared in the dataset (`feature_weights`):
 
 | Feature   | Weight | Method                                                  |
 |-----------|--------|--------------------------------------------------------|
-| Imphash   | 0.30   | exact match — identical import-table hash = 1.0         |
-| Imports   | 0.25   | blended Jaccard + containment                          |
-| Functions | 0.15   | blended Jaccard + containment                          |
-| Strings   | 0.15   | blended Jaccard + containment                          |
-| Resources | 0.05   | blended Jaccard + containment                          |
-| Compiler  | 0.10   | toolchain-family match (broad, versionless = weak)     |
+| Imphash   | 0.28   | exact match — identical import-table hash = 1.0         |
+| TLSH      | 0.27   | fuzzy-hash distance — graduated structural similarity   |
+| Imports   | 0.15   | blended Jaccard + containment                          |
+| Functions | 0.10   | blended Jaccard + containment                          |
+| Strings   | 0.10   | blended Jaccard + containment                          |
+| Resources | 0.03   | blended Jaccard + containment                          |
+| Compiler  | 0.07   | toolchain-family match (broad, versionless = weak)     |
+
+**TLSH** (Trend Micro Locality Sensitive Hash) is the key to scoring samples that don't share an
+exact imphash: it is a *fuzzy* hash whose pairwise distance measures how structurally similar two
+files are. A small distance (< ~60) reads as "very close", a few hundred as "unrelated". This is what
+lets an arbitrary sample get a meaningful percentage against structurally-similar neighbors instead
+of collapsing to a floor. MalwareBazaar provides TLSH for most samples, so it works on live lookups.
 
 Set similarity blends **Jaccard** (`|A∩B| / |A∪B|`) with the **containment coefficient**
 (`|A∩B| / min(|A|,|B|)`) as `0.6·jaccard + 0.4·containment`.

@@ -113,6 +113,66 @@ export function compilerScore(aComp, bComp) {
   return { score: 0.25, present: true, note: "same broad toolchain (weak signal)" };
 }
 
+// TLSH (Trend Micro Locality Sensitive Hash) is a fuzzy hash: unlike imphash
+// (exact), the DISTANCE between two TLSH digests measures how structurally
+// similar two files are, even when not identical. This is what lets a sample
+// with a unique imphash still score meaningful similarity to near-neighbors.
+//
+// We compute the standard TLSH diff (approximation): header terms (length +
+// Q-ratio bytes) plus the body distance, where each of the 128 2-bit buckets
+// contributes 0/1/2/6 by absolute difference (the canonical TLSH weighting).
+// Distance 0 = identical; typical "related" files are < 100; unrelated are
+// several hundred. We map distance to a 0..1 similarity with a soft curve.
+function hexPairs(body) {
+  // each hex char is a 2-bit-pair nibble; TLSH body buckets are 2 bits each,
+  // i.e. 4 buckets per byte / 2 per hex char. We compare per hex nibble using
+  // the canonical mod-difference table for robustness without full bit unpack.
+  const vals = [];
+  for (let i = 0; i < body.length; i++) {
+    const n = parseInt(body[i], 16);
+    if (Number.isNaN(n)) return null;
+    // split nibble into two 2-bit buckets
+    vals.push((n >> 2) & 0x3, n & 0x3);
+  }
+  return vals;
+}
+
+function bucketDiff(a, b) {
+  const d = Math.abs(a - b);
+  return d === 3 ? 6 : d; // canonical TLSH: diff of 3 costs 6, else the diff
+}
+
+export function tlshDistance(aHash, bHash) {
+  const a = normalizeToken(aHash).replace(/^t1/, "");
+  const b = normalizeToken(bHash).replace(/^t1/, "");
+  if (a.length < 70 || b.length < 70 || a.length !== b.length) return null;
+  // header: first 6 hex = checksum(2) + length(2) + qratios(2). Compare length
+  // and qratio nibbles; skip the checksum (position-only, not similarity).
+  let dist = 0;
+  const lenA = parseInt(a.slice(2, 4), 16), lenB = parseInt(b.slice(2, 4), 16);
+  dist += Math.min(Math.abs(lenA - lenB), 256) * 1;
+  const bodyA = hexPairs(a.slice(6));
+  const bodyB = hexPairs(b.slice(6));
+  if (!bodyA || !bodyB) return null;
+  for (let i = 0; i < bodyA.length; i++) dist += bucketDiff(bodyA[i], bodyB[i]);
+  return dist;
+}
+
+export function tlshScore(aHash, bHash) {
+  const d = tlshDistance(aHash, bHash);
+  if (d === null) return { score: 0, present: false, note: "TLSH missing/incompatible" };
+  // Map distance -> similarity. d=0 identical (1.0); d>=300 ~ unrelated (~0).
+  // Soft curve so near-neighbors (d<100) still read as clearly similar.
+  const score = Math.max(0, 1 - d / 300);
+  const note =
+    d === 0 ? "identical TLSH" :
+    d < 60 ? `very close (TLSH dist ${d})` :
+    d < 120 ? `related (TLSH dist ${d})` :
+    d < 200 ? `distant (TLSH dist ${d})` :
+    `unrelated (TLSH dist ${d})`;
+  return { score, present: true, distance: d, note };
+}
+
 // imphash is a hash of a PE's import table: two files with the SAME imphash have
 // an identical set/order of imported functions — a very strong same-toolkit /
 // same-family signal that real malware clustering relies on. It is an exact
@@ -131,17 +191,18 @@ export function imphashScore(aImp, bImp) {
 // breakdown the UI renders.
 export function compareSamples(query, candidate, weights) {
   const w = weights || {
-    imphash: 0.3, imports: 0.25, functions: 0.15, strings: 0.15, resources: 0.05, compiler: 0.1,
+    imphash: 0.28, tlsh: 0.27, imports: 0.15, functions: 0.1, strings: 0.1, resources: 0.03, compiler: 0.07,
   };
 
   const imphash = imphashScore(query.imphash, candidate.imphash);
+  const tlsh = tlshScore(query.tlsh || firstTlsh(query.strings), candidate.tlsh || firstTlsh(candidate.strings));
   const functions = setScore(query.functions, candidate.functions);
   const imports = setScore(mergeImports(query), mergeImports(candidate));
   const strings = setScore(query.strings, candidate.strings);
   const resources = setScore(query.resources, candidate.resources);
   const compiler = compilerScore(query.compiler, candidate.compiler);
 
-  const parts = { imphash, functions, imports, strings, resources, compiler };
+  const parts = { imphash, tlsh, functions, imports, strings, resources, compiler };
 
   // Only features present (carrying evidence) on BOTH sides count toward the
   // score, and the weights are renormalized over just those. This means a
@@ -170,6 +231,16 @@ export function compareSamples(query, candidate, weights) {
     coverage,
     parts,
   };
+}
+
+// Corpus samples carry their TLSH as a "tlsh:<hex>" token in strings; pull it
+// out so tlshScore can use it even when there's no top-level tlsh field.
+export function firstTlsh(strings) {
+  for (const s of strings || []) {
+    const t = String(s);
+    if (t.toLowerCase().startsWith("tlsh:")) return t.slice(5);
+  }
+  return null;
 }
 
 // Treat DLL names and imported function names as one "imports" feature so the

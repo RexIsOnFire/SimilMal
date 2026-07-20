@@ -49,13 +49,43 @@ function scoreClass(p) {
 function renderExamples() {
   const wrap = el("examples");
   wrap.innerHTML = "";
-  for (const s of state.corpus.samples.slice(0, 8)) {
+
+  // Pick examples that actually demonstrate the engine: prefer samples whose
+  // imphash is shared by at least one OTHER corpus sample (so clicking them
+  // yields a real high-confidence match), and spread across distinct families
+  // so the chips aren't all one family.
+  const samples = state.corpus.samples;
+  const imphashCounts = new Map();
+  for (const s of samples) if (s.imphash) imphashCounts.set(s.imphash, (imphashCounts.get(s.imphash) || 0) + 1);
+
+  const seenFamily = new Set();
+  const picks = [];
+  const consider = (pred) => {
+    for (const s of samples) {
+      if (picks.length >= 8) break;
+      if (seenFamily.has(s.family)) continue;
+      if (!pred(s)) continue;
+      picks.push(s);
+      seenFamily.add(s.family);
+    }
+  };
+  // 1) one sample per family that shares its imphash with another sample
+  consider((s) => s.imphash && imphashCounts.get(s.imphash) > 1);
+  // 2) fill remaining slots with any other families
+  consider(() => true);
+
+  for (const s of picks) {
+    const shared = s.imphash && imphashCounts.get(s.imphash) > 1;
     const b = document.createElement("button");
     b.className = "chip";
-    b.textContent = s.family + " — " + s.sha256.slice(0, 10) + "…";
-    b.title = s.name + "\n" + s.sha256;
+    b.textContent = s.family + " — " + s.sha256.slice(0, 10) + "…" + (shared ? " ★" : "");
+    b.title = s.name + "\n" + s.sha256 + (shared ? "\n★ shares an imphash with other corpus samples — good demo of matching" : "");
     b.addEventListener("click", () => {
       el("hash-input").value = s.sha256;
+      // examples are IN the corpus, so run against the corpus (not live) to
+      // show the full feature breakdown.
+      const box = el("prefer-live");
+      if (box) box.checked = false;
       runAnalysis();
     });
     wrap.appendChild(b);
@@ -132,6 +162,7 @@ function renderTopMatch(query, result, familyGuess, sourceInfo) {
     <h3 class="section-h">Feature breakdown</h3>
     <div class="features">
       ${featureRow("Imphash (import table)", p.imphash, "imphash")}
+      ${featureRow("TLSH (fuzzy structure)", p.tlsh, "imphash")}
       ${featureRow("Imports", p.imports, "imports")}
       ${featureRow("Shared functions", p.functions, "functions")}
       ${featureRow("Shared strings", p.strings, "strings")}

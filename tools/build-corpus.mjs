@@ -128,6 +128,7 @@ async function main() {
         compiler: fileTypeToCompiler(s.file_type, tags),
         arch: (s.file_type || "").toUpperCase(),
         imphash: s.imphash && s.imphash !== "n/a" ? s.imphash : null,
+        tlsh: s.tlsh && s.tlsh !== "n/a" ? s.tlsh : null,
         imports,
         imported_functions: importedFns,
         functions: [], // MalwareBazaar does not provide disassembled functions
@@ -144,12 +145,13 @@ async function main() {
     source: "MalwareBazaar (abuse.ch) recent CSV feed + get_info enrichment",
     note: "Real published PE malware metadata from MalwareBazaar: genuine SHA256 hashes, imphashes, signatures, and (for enriched samples) real PE import tables. Disassembled functions and extracted strings are not available from MalwareBazaar, so those feature sets are empty; matching leans on imphash, imports, compiler and tags.",
     feature_weights: {
-      imphash: 0.30,
-      imports: 0.25,
-      functions: 0.15,
-      strings: 0.15,
-      resources: 0.05,
-      compiler: 0.10,
+      imphash: 0.28,
+      tlsh: 0.27,
+      imports: 0.15,
+      functions: 0.10,
+      strings: 0.10,
+      resources: 0.03,
+      compiler: 0.07,
     },
     samples,
   };

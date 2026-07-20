@@ -76,15 +76,17 @@ function mbRecordToProfile(rec) {
     compiler: guessCompilerFromMb(rec),
     arch: rec.file_arch || String(rec.file_type || "").toUpperCase(),
     imphash: rec.imphash && rec.imphash !== "n/a" ? rec.imphash : null,
+    tlsh: rec.tlsh && rec.tlsh !== "n/a" ? rec.tlsh : null,
     imports,
     imported_functions: importedFns,
     functions: [], // not provided by MalwareBazaar metadata
     strings,
     resources: [],
     _source: "malwarebazaar",
-    // "partial" = no strong structural feature to match on. With a real imphash
-    // we DO have a strong signal, so only flag partial when even that is absent.
-    _partial: !rec.imphash || rec.imphash === "n/a",
+    // "partial" = no strong structural feature to match on. imphash (exact) and
+    // tlsh (fuzzy) are both real structural signals, so only flag partial when
+    // BOTH are absent (e.g. a script sample with neither).
+    _partial: (!rec.imphash || rec.imphash === "n/a") && (!rec.tlsh || rec.tlsh === "n/a"),
   };
 }
 
