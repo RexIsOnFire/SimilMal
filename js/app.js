@@ -1,6 +1,6 @@
 // app.js — controller: wire the UI to the datasource + similarity engine.
 import { rankCorpus, inferFamily } from "./similarity.js";
-import { resolveSample, getSavedApiKey, saveApiKey } from "./datasource.js";
+import { resolveSample, getProxyUrl, saveProxyUrl } from "./datasource.js";
 
 const SHA256_RE = /^[a-fA-F0-9]{64}$/;
 
@@ -227,18 +227,19 @@ async function runAnalysis() {
   }
 }
 
-// ---- settings (API key) -------------------------------------------------
+// ---- settings (proxy URL) -----------------------------------------------
 
 function initSettings() {
   const dlg = el("settings");
-  const keyField = el("api-key");
-  keyField.value = getSavedApiKey();
+  const proxyField = el("proxy-url");
+  proxyField.value = getProxyUrl();
 
   el("settings-btn").addEventListener("click", () => dlg.showModal());
   el("settings-close").addEventListener("click", () => dlg.close());
-  el("save-key").addEventListener("click", () => {
-    saveApiKey(keyField.value.trim());
-    showMessage(keyField.value.trim() ? "API key saved to this browser." : "API key cleared.", "info");
+  el("save-proxy").addEventListener("click", () => {
+    const val = proxyField.value.trim();
+    saveProxyUrl(val);
+    showMessage(val ? "Proxy URL saved. Live lookup is now enabled." : "Proxy URL cleared. Live lookup disabled.", "info");
     dlg.close();
   });
 }

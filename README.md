@@ -46,15 +46,28 @@ approximations compiled from public reporting — this is a teaching/demonstrati
 sandbox dump.
 
 **Live lookup (optional).** For a hash not in the corpus, SimilMal can query
-**MalwareBazaar (abuse.ch)** live from your browser. This requires **your own** Auth-Key, entered in
-Settings and stored only in this browser's `localStorage` — no secret is ever committed to the repo.
+**MalwareBazaar (abuse.ch)** live — through a small proxy you deploy (see below).
 
-> Important browser limitation: a purely static page cannot safely embed a shared API key, and live
-> calls only work if MalwareBazaar returns permissive CORS headers to the browser. When the live call
-> is blocked (CORS/network) or the hash is unknown, SimilMal falls back to the bundled corpus and says
-> so in the UI. MalwareBazaar metadata also lacks disassembled functions and extracted strings, so a
-> live result is scored on the features it does provide (imports, compiler, tags) and flagged as
-> coarse.
+> Why a proxy is required: MalwareBazaar requires an API key on *every* request and sends **no CORS
+> headers**, so a static browser page cannot call it directly — the browser blocks the request no
+> matter what. The proxy Worker solves both problems: it holds your key server-side and adds CORS.
+> MalwareBazaar's `get_info` also returns only metadata (imports/imphash, compiler hints, tags) — not
+> disassembled functions or extracted strings — so a live result is scored on the features it does
+> provide and is flagged as **coarse** in the UI.
+
+### Enabling live lookup (deploy the proxy Worker)
+
+1. Get a free MalwareBazaar Auth-Key: <https://auth.abuse.ch/>
+2. In Cloudflare (free tier): **Workers & Pages → Create → Worker**, and paste the contents of
+   [`worker/malwarebazaar-proxy.js`](worker/malwarebazaar-proxy.js).
+3. In the Worker's **Settings → Variables**, add a **secret** `MB_AUTH_KEY` = your key. Optionally add
+   `ALLOWED_ORIGIN` = `https://<youruser>.github.io` so only your site can use it.
+4. Deploy and copy the Worker URL (e.g. `https://similmal-proxy.<you>.workers.dev`).
+5. In SimilMal → **Settings**, paste that URL as the **Proxy Worker URL**.
+
+Now hashes outside the bundled corpus resolve live via MalwareBazaar. Your key lives only in the
+Worker — never in this page, the repo, or the visitor's browser. The Worker only forwards a single
+`get_info` hash query, so it can't be abused as an open proxy.
 
 ## Run locally
 
@@ -124,9 +137,10 @@ index.html               UI shell
 css/styles.css           Styles
 js/app.js                Controller: input -> resolve -> rank -> render (+ base64 decode)
 js/similarity.js         Weighted multi-feature similarity engine
-js/datasource.js         Corpus lookup + MalwareBazaar live adapter
+js/datasource.js         Corpus lookup + MalwareBazaar live adapter (via proxy)
 data/dataset.b64.json    Curated corpus, base64-encoded (loaded by the app)
 tools/encode-dataset.mjs Re-encode plaintext dataset -> base64 wrapper
+worker/malwarebazaar-proxy.js  Cloudflare Worker: CORS proxy holding your MB key
 .github/workflows/       GitHub Pages deploy workflow
 ```
 

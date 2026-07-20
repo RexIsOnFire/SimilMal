@@ -2,35 +2,36 @@
 //
 // Order of resolution:
 //   1. Bundled corpus (instant, offline, full features).
-//   2. Live MalwareBazaar lookup IF the user has saved their own Auth-Key.
+//   2. Live MalwareBazaar lookup via the user's proxy Worker (optional).
 //
-// MalwareBazaar (abuse.ch) requires an Auth-Key header. A public static page
-// must NOT ship a secret key, so the key is entered by the user and kept only
-// in this browser's localStorage. Even then, browser access depends on the
-// endpoint sending permissive CORS headers; when it doesn't, the fetch fails
-// and we fall back to the corpus. That limitation is surfaced in the UI, not
-// hidden.
+// Why a proxy Worker instead of calling MalwareBazaar directly:
+//   MalwareBazaar (mb-api.abuse.ch) requires an Auth-Key on every request AND
+//   sends no CORS headers, so a static browser page can never call it directly.
+//   The user deploys the tiny Cloudflare Worker in worker/malwarebazaar-proxy.js
+//   (which holds their key server-side and adds CORS) and pastes its URL here.
+//   The browser calls the Worker; the Worker calls MalwareBazaar. No secret ever
+//   lives in this page or the visitor's browser.
 //
-// MalwareBazaar's get_info returns metadata (imports, file_type, signatures,
-// tags) but NOT disassembled functions or extracted strings, so a live sample
-// is scored on the features it actually has (imports/compiler/tags-as-strings)
-// with the missing sets left empty.
+// MalwareBazaar's get_info returns metadata (imports/imphash, file_type,
+// signature, tags) but NOT disassembled functions or extracted strings, so a
+// live sample is scored on the features it actually has, with the missing sets
+// left empty and flagged as coarse in the UI.
 
-const MB_ENDPOINT = "https://mb-api.abuse.ch/api/v1/";
-const KEY_STORAGE = "similmal.mb_authkey";
+const PROXY_STORAGE = "similmal.proxy_url";
 
-export function getSavedApiKey() {
+export function getProxyUrl() {
   try {
-    return localStorage.getItem(KEY_STORAGE) || "";
+    return (localStorage.getItem(PROXY_STORAGE) || "").trim();
   } catch {
     return "";
   }
 }
 
-export function saveApiKey(key) {
+export function saveProxyUrl(url) {
   try {
-    if (key) localStorage.setItem(KEY_STORAGE, key);
-    else localStorage.removeItem(KEY_STORAGE);
+    const clean = (url || "").trim();
+    if (clean) localStorage.setItem(PROXY_STORAGE, clean);
+    else localStorage.removeItem(PROXY_STORAGE);
     return true;
   } catch {
     return false;
@@ -44,18 +45,14 @@ export function findInCorpus(sha256, corpus) {
 
 // Map a MalwareBazaar get_info record into our feature-profile shape.
 function mbRecordToProfile(rec) {
+  const tags = Array.isArray(rec.tags) ? rec.tags : [];
   const family =
     rec.signature ||
-    (Array.isArray(rec.tags) ? rec.tags.find((t) => /trojan|ransom|stealer|bot|loader|rat|worm|miner/i.test(t)) : null) ||
+    tags.find((t) => /trojan|ransom|stealer|bot|loader|rat|worm|miner|wiper|backdoor/i.test(t)) ||
     "Unknown";
 
-  // MalwareBazaar exposes imported DLLs via the "pe_imphash" world only
-  // indirectly; the richest import data is in the "code_sign" / "dhash_icon"
-  // fields plus tags. We use what's present and label the rest as unavailable.
   const imports = [];
   const importedFns = [];
-
-  // Some records carry a "pe" section with imports when available.
   if (rec.pe && Array.isArray(rec.pe.imports)) {
     for (const imp of rec.pe.imports) {
       if (imp.dll) imports.push(imp.dll);
@@ -63,18 +60,21 @@ function mbRecordToProfile(rec) {
     }
   }
 
-  const strings = Array.isArray(rec.tags) ? rec.tags.slice() : [];
-  if (rec.file_name) strings.push(rec.file_name);
+  // Use the imphash as a strong "import fingerprint" string when the full import
+  // table isn't provided, plus tags and filenames as available string features.
+  const strings = tags.slice();
   if (rec.imphash) strings.push("imphash:" + rec.imphash);
+  if (rec.tlsh) strings.push("tlsh:" + rec.tlsh);
+  if (rec.file_name) strings.push(rec.file_name);
 
   return {
     sha256: (rec.sha256_hash || "").toLowerCase(),
     name: rec.file_name || rec.sha256_hash,
     family,
-    type: (rec.tags && rec.tags[0]) || rec.file_type || "Unknown",
+    type: tags[0] || rec.file_type || "Unknown",
     first_seen: rec.first_seen || null,
     compiler: guessCompilerFromMb(rec),
-    arch: rec.architecture || (rec.file_type || "").toUpperCase(),
+    arch: rec.architecture || String(rec.file_type || "").toUpperCase(),
     imports,
     imported_functions: importedFns,
     functions: [], // not provided by MalwareBazaar metadata
@@ -88,70 +88,74 @@ function mbRecordToProfile(rec) {
 function guessCompilerFromMb(rec) {
   const ft = String(rec.file_type || "").toLowerCase();
   const tags = (rec.tags || []).map((t) => t.toLowerCase());
-  if (tags.includes("net") || ft.includes("net") || tags.includes("msil")) return ".NET (C#)";
+  if (tags.includes("net") || tags.includes("msil") || ft.includes("net")) return ".NET (C#)";
   if (ft.includes("elf")) return "GCC (ELF)";
   if (tags.includes("upx")) return "UPX (packed)";
   if (ft.includes("dll") || ft.includes("exe")) return "Microsoft Visual C++ (unknown)";
   return "unknown";
 }
 
-// Query MalwareBazaar for a hash. Resolves to a profile, or throws with a
-// human-readable reason the caller shows before falling back to the corpus.
-export async function queryMalwareBazaar(sha256, apiKey) {
-  if (!apiKey) throw new Error("no-key");
-
-  const body = new URLSearchParams();
-  body.set("query", "get_info");
-  body.set("hash", String(sha256).trim());
+// Query MalwareBazaar through the user's proxy Worker. Resolves to a profile or
+// throws with a machine-readable message the caller turns into UI text.
+export async function queryViaProxy(sha256, proxyUrl) {
+  if (!proxyUrl) throw new Error("no-proxy");
 
   let resp;
   try {
-    resp = await fetch(MB_ENDPOINT, {
+    resp = await fetch(proxyUrl, {
       method: "POST",
-      headers: { "Auth-Key": apiKey, "Content-Type": "application/x-www-form-urlencoded" },
-      body: body.toString(),
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ hash: String(sha256).trim() }),
     });
   } catch (e) {
-    // Almost always a CORS or network failure from the browser.
-    const err = new Error("network-or-cors");
+    const err = new Error("proxy-unreachable");
     err.detail = String(e && e.message ? e.message : e);
     throw err;
   }
 
-  if (!resp.ok) {
-    const err = new Error("http-" + resp.status);
-    throw err;
+  let data;
+  try {
+    data = await resp.json();
+  } catch {
+    throw new Error("proxy-bad-response");
   }
 
-  const data = await resp.json();
-  if (data.query_status !== "ok" || !Array.isArray(data.data) || data.data.length === 0) {
-    const err = new Error("not-found");
-    err.status = data.query_status;
+  if (!resp.ok) {
+    // Worker/upstream errors carry a structured { error } we can surface.
+    const err = new Error("proxy-error-" + resp.status);
+    err.detail = data && data.error ? data.error : "";
     throw err;
+  }
+  if (data.query_status && data.query_status !== "ok") {
+    throw new Error(data.query_status === "hash_not_found" ? "not-found" : "mb-" + data.query_status);
+  }
+  if (!Array.isArray(data.data) || data.data.length === 0) {
+    throw new Error("not-found");
   }
 
   return mbRecordToProfile(data.data[0]);
 }
 
 // High-level resolver used by the app. Returns { profile, source, warning }.
+//
+// preferLive === true: try the proxy FIRST (for a hash that may also be in the
+// corpus, e.g. to compare live metadata), then fall back to the corpus.
+// preferLive falsey: corpus first; only try the proxy if the hash is unknown
+// AND a proxy is configured. An unchecked box with no proxy never calls out.
 export async function resolveSample(sha256, corpus, { preferLive } = {}) {
   const inCorpus = findInCorpus(sha256, corpus);
-  const apiKey = getSavedApiKey();
+  const proxyUrl = getProxyUrl();
 
-  // If a key is set and the user asked to prefer live, try MalwareBazaar first.
-  if (preferLive && apiKey) {
+  if (preferLive && proxyUrl) {
     try {
-      const profile = await queryMalwareBazaar(sha256, apiKey);
-      const warning = profile._partial
-        ? "MalwareBazaar returned metadata only (no disassembled functions or extracted strings). Similarity is computed on imports, compiler and tags — treat scores as coarse."
-        : null;
-      return { profile, source: "malwarebazaar", warning };
+      const profile = await queryViaProxy(sha256, proxyUrl);
+      return { profile, source: "malwarebazaar", warning: partialWarning(profile) };
     } catch (e) {
       const reason = liveErrorMessage(e);
       if (inCorpus) {
         return { profile: inCorpus, source: "corpus", warning: "Live lookup failed (" + reason + "). Showing bundled corpus profile instead." };
       }
-      return { profile: null, source: null, warning: "Live lookup failed (" + reason + ") and the hash is not in the bundled corpus." };
+      return { profile: null, source: null, warning: "Live lookup failed (" + reason + "), and this hash is not in the bundled corpus." };
     }
   }
 
@@ -159,31 +163,42 @@ export async function resolveSample(sha256, corpus, { preferLive } = {}) {
     return { profile: inCorpus, source: "corpus", warning: null };
   }
 
-  // Not in corpus and no live path attempted.
-  if (apiKey) {
-    // Have a key but preferLive was off; try live as a fallback.
+  // Not in corpus. Only reach out if the user actually configured a proxy.
+  if (proxyUrl) {
     try {
-      const profile = await queryMalwareBazaar(sha256, corpus && apiKey);
-      return { profile, source: "malwarebazaar", warning: profile._partial ? "Metadata-only live result; scores are coarse." : null };
+      const profile = await queryViaProxy(sha256, proxyUrl);
+      return { profile, source: "malwarebazaar", warning: partialWarning(profile) };
     } catch (e) {
-      return { profile: null, source: null, warning: "Hash not in corpus; live lookup failed (" + liveErrorMessage(e) + ")." };
+      return { profile: null, source: null, warning: "This hash is not in the bundled corpus, and the live lookup failed (" + liveErrorMessage(e) + ")." };
     }
   }
 
   return {
     profile: null,
     source: null,
-    warning: "This SHA256 is not in the bundled corpus. Add your MalwareBazaar Auth-Key in Settings to attempt a live lookup.",
+    warning: "This SHA256 is not in the bundled corpus. To look up arbitrary hashes live, deploy the MalwareBazaar proxy Worker and paste its URL in Settings.",
   };
 }
 
+function partialWarning(profile) {
+  return profile._partial
+    ? "MalwareBazaar returned metadata only (no disassembled functions or extracted strings). Similarity is computed on imports, compiler and tags — treat scores as coarse."
+    : null;
+}
+
 function liveErrorMessage(e) {
-  switch (e && e.message) {
-    case "no-key": return "no API key saved";
-    case "network-or-cors": return "network/CORS blocked in browser";
+  const m = e && e.message;
+  switch (m) {
+    case "no-proxy": return "no proxy URL configured";
+    case "proxy-unreachable": return "proxy unreachable (check the Worker URL)";
+    case "proxy-bad-response": return "proxy returned a non-JSON response";
     case "not-found": return "hash unknown to MalwareBazaar";
     default:
-      if (e && e.message && e.message.startsWith("http-")) return "API returned " + e.message.slice(5);
-      return e && e.message ? e.message : "unknown error";
+      if (m && m.startsWith("proxy-error-")) {
+        const detail = e.detail ? " – " + e.detail : "";
+        return "proxy/upstream returned " + m.slice(12) + detail;
+      }
+      if (m && m.startsWith("mb-")) return "MalwareBazaar: " + m.slice(3);
+      return m || "unknown error";
   }
 }

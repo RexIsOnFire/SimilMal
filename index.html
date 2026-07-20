@@ -36,7 +36,7 @@
       <div class="options-row">
         <label class="checkbox">
           <input type="checkbox" id="prefer-live" />
-          <span>Prefer live lookup (MalwareBazaar, needs your API key)</span>
+          <span>Prefer live lookup (MalwareBazaar via your proxy Worker — see Settings)</span>
         </label>
       </div>
 
@@ -75,18 +75,19 @@
 
   <dialog id="settings" class="settings-dialog">
     <form method="dialog">
-      <h2>API settings</h2>
+      <h2>Live lookup settings</h2>
       <p class="dialog-help">
-        SimilMal can attempt a live lookup on <strong>MalwareBazaar (abuse.ch)</strong> for hashes not
-        in the bundled corpus. This needs <em>your own</em> Auth-Key, stored only in this browser
-        (<code>localStorage</code>) and never sent anywhere except MalwareBazaar. Browser access also
-        depends on MalwareBazaar allowing cross-origin requests; if it doesn't, SimilMal falls back to
-        the bundled corpus.
+        <strong>MalwareBazaar</strong> requires an API key on every request and sends no CORS headers,
+        so a static site cannot call it directly from the browser. To enable live lookup, deploy the
+        included <strong>proxy Worker</strong> (<code>worker/malwarebazaar-proxy.js</code>) — a free
+        Cloudflare Worker that holds <em>your</em> MalwareBazaar key server-side and adds CORS — then
+        paste its URL below. Your key stays in the Worker; it is never stored in this page or your
+        browser. Setup steps are in the project README.
       </p>
-      <label for="api-key" class="input-label">MalwareBazaar Auth-Key</label>
-      <input id="api-key" type="password" spellcheck="false" autocomplete="off" placeholder="paste your key" />
+      <label for="proxy-url" class="input-label">Proxy Worker URL</label>
+      <input id="proxy-url" type="url" spellcheck="false" autocomplete="off" placeholder="https://similmal-proxy.yourname.workers.dev" />
       <div class="dialog-actions">
-        <button id="save-key" type="button" class="primary-btn">Save</button>
+        <button id="save-proxy" type="button" class="primary-btn">Save</button>
         <button id="settings-close" type="button" class="ghost-btn">Close</button>
       </div>
     </form>
