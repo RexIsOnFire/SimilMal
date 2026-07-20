@@ -34,7 +34,11 @@ export function intersect(aSet, bSet) {
 }
 
 export function jaccard(aSet, bSet) {
-  if (aSet.size === 0 && bSet.size === 0) return 1; // both empty == identical (e.g. ELF imports)
+  // NOTE: "both empty" is deliberately NOT treated as identical here. Absence of
+  // a feature on both sides is absence of evidence, not evidence of similarity.
+  // compareSamples() excludes a feature that is empty on both sides from the
+  // weighted average entirely (see `present` in setScore), so this function is
+  // only ever called with at least one non-empty side in scoring.
   if (aSet.size === 0 || bSet.size === 0) return 0;
   const shared = intersect(aSet, bSet).length;
   const union = aSet.size + bSet.size - shared;
@@ -43,18 +47,24 @@ export function jaccard(aSet, bSet) {
 
 export function containment(aSet, bSet) {
   const minSize = Math.min(aSet.size, bSet.size);
-  if (minSize === 0) return aSet.size === bSet.size ? 1 : 0;
+  if (minSize === 0) return 0;
   return intersect(aSet, bSet).length / minSize;
 }
 
 export function setScore(aList, bList) {
   const a = toSet(aList);
   const b = toSet(bList);
+  // `present` = this feature carries evidence to compare. If BOTH sides are
+  // empty the feature is unknown for this pair and must be excluded from the
+  // weighted average (not scored 1.0 — that bug made every metadata-only live
+  // sample match whichever corpus entry shared the same empty feature).
+  const present = a.size > 0 && b.size > 0;
   const j = jaccard(a, b);
   const c = containment(a, b);
   const score = 0.6 * j + 0.4 * c;
   return {
     score,
+    present,
     jaccard: j,
     containment: c,
     shared: intersect(a, b),
@@ -87,14 +97,17 @@ function compilerFamily(s) {
 export function compilerScore(aComp, bComp) {
   const a = compilerFamily(aComp);
   const b = compilerFamily(bComp);
-  if (a.family === "unknown" || b.family === "unknown") return { score: 0.5, note: "unknown toolchain" };
-  if (a.family !== b.family) return { score: 0, note: "different toolchain family" };
+  // Unknown on either side = no evidence: mark not-present so it is excluded
+  // from the weighted average rather than contributing a misleading 0.5.
+  if (a.family === "unknown" || b.family === "unknown")
+    return { score: 0, present: false, note: "toolchain unknown on one side" };
+  if (a.family !== b.family) return { score: 0, present: true, note: "different toolchain family" };
   if (a.version && b.version) {
     return a.version === b.version
-      ? { score: 1, note: "same toolchain + version" }
-      : { score: 0.75, note: "same toolchain, different version" };
+      ? { score: 1, present: true, note: "same toolchain + version" }
+      : { score: 0.75, present: true, note: "same toolchain, different version" };
   }
-  return { score: 0.9, note: "same toolchain family" };
+  return { score: 0.9, present: true, note: "same toolchain family" };
 }
 
 // Compare two samples, returning the overall percentage plus the per-feature
@@ -105,29 +118,38 @@ export function compareSamples(query, candidate, weights) {
   };
 
   const functions = setScore(query.functions, candidate.functions);
-  const imports = setScore(
-    mergeImports(query),
-    mergeImports(candidate)
-  );
+  const imports = setScore(mergeImports(query), mergeImports(candidate));
   const strings = setScore(query.strings, candidate.strings);
   const resources = setScore(query.resources, candidate.resources);
   const compiler = compilerScore(query.compiler, candidate.compiler);
 
   const parts = { functions, imports, strings, resources, compiler };
 
+  // Only features present (carrying evidence) on BOTH sides count toward the
+  // score, and the weights are renormalized over just those. This means a
+  // metadata-only live sample (no functions/strings/resources) is judged on
+  // the features it actually has — not penalized or falsely boosted by the
+  // features it lacks.
   let total = 0;
   let weightSum = 0;
   for (const key of Object.keys(w)) {
     const part = parts[key];
-    if (!part) continue;
+    if (!part || !part.present) continue;
     total += w[key] * part.score;
     weightSum += w[key];
   }
   const overall = weightSum > 0 ? total / weightSum : 0;
 
+  // How much of the model's total weight actually had evidence — lets the UI
+  // say "scored on 40% of features" and the family inference stay cautious
+  // when comparisons rest on thin data.
+  const totalWeight = Object.values(w).reduce((s, x) => s + x, 0) || 1;
+  const coverage = weightSum / totalWeight;
+
   return {
     overall,
     overallPct: Math.round(overall * 1000) / 10, // one decimal
+    coverage,
     parts,
   };
 }

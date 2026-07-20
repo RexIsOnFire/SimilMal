@@ -113,7 +113,7 @@ function renderTopMatch(query, result, familyGuess, sourceInfo) {
         </div>
         <div class="verdict-line">
           <span class="k">Likely family</span>
-          <span class="v family">${esc(familyGuess.family)} <span class="conf">confidence ${familyGuess.confidence}%</span></span>
+          <span class="v family">${esc(familyGuess.family)} <span class="conf">${familyGuess.confidence}% · ${esc(familyGuess.source || "similarity inference")}</span></span>
         </div>
         <div class="verdict-line">
           <span class="k">Type</span><span class="v">${esc(c.type || "—")}</span>
@@ -208,12 +208,28 @@ async function runAnalysis() {
     if (warning) showMessage(warning, "warn");
 
     const ranked = rankCorpus(profile, state.corpus, { excludeSelf: true });
-    const familyGuess = inferFamily(ranked, { topK: 5 });
 
     if (ranked.length === 0) {
       el("result").classList.add("hidden");
       showMessage("Loaded the sample, but the corpus has nothing to compare against.", "warn");
       return;
+    }
+
+    // Family: if the source already KNOWS the family (MalwareBazaar's signature,
+    // or a labeled corpus hit), that is authoritative — report it directly and
+    // don't overwrite it with a similarity guess. Only infer from the corpus
+    // when the sample itself carries no family label.
+    const knownFamily = profile.family && !/^unknown/i.test(profile.family) ? profile.family : null;
+    let familyGuess;
+    if (knownFamily) {
+      familyGuess = {
+        family: knownFamily,
+        confidence: source === "malwarebazaar" ? 100 : 95,
+        source: source === "malwarebazaar" ? "MalwareBazaar signature" : "corpus label",
+      };
+    } else {
+      familyGuess = inferFamily(ranked, { topK: 5 });
+      familyGuess.source = "similarity inference";
     }
 
     renderTopMatch(profile, ranked[0], familyGuess, { source });
