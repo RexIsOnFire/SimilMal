@@ -27,14 +27,10 @@ if (!proxyUrl) {
   process.exit(1);
 }
 
-// Families we want represented, mapped from MB signature strings (lowercased
-// substring match). Kept broad so we catch naming variants.
-const WANT = [
-  "WannaCry", "Emotet", "TrickBot", "AgentTesla", "Mirai", "RedLine",
-  "Formbook", "RemcosRAT", "AsyncRAT", "Loki", "njRAT", "QakBot",
-  "Gozi", "SnakeKeylogger", "NanoCore", "Amadey", "Vidar", "Stealc",
-  "CobaltStrike", "Quasar", "GuLoader", "Rhadamanthys",
-];
+// We do NOT hardcode families: every named signature in the feed is eligible,
+// so the corpus reflects whatever real families are circulating. A family is
+// only kept if it reaches `minPerFamily` samples, to avoid one-off noise.
+const minPerFamily = parseInt(process.env.MIN_PER_FAMILY || "1", 10);
 
 function parseCsvLine(line) {
   // MB CSV fields are quoted and comma+space separated: "a", "b", ...
@@ -92,13 +88,17 @@ async function main() {
     if (f.length < 14) continue;
     const [first_seen, sha256, , , , file_name, file_type, , signature, , , imphash, , tlsh] = f;
     if (!signature || signature === "n/a") continue;
-    const fam = WANT.find((w) => signature.toLowerCase().includes(w.toLowerCase()));
-    if (!fam) continue;
+    const fam = signature; // every named family is eligible
     if (!byFamily.has(fam)) byFamily.set(fam, []);
     const list = byFamily.get(fam);
     if (list.length >= perFamily) continue;
-    if (list.some((s) => s.imphash && s.imphash === imphash)) continue; // dedup identical imphash
+    if (imphash && imphash !== "n/a" && list.some((s) => s.imphash === imphash)) continue; // dedup identical imphash
     list.push({ first_seen, sha256, file_name, file_type, signature, imphash, tlsh });
+  }
+
+  // drop families that didn't reach the minimum (avoids one-off signature noise)
+  for (const [fam, list] of [...byFamily]) {
+    if (list.length < minPerFamily) byFamily.delete(fam);
   }
 
   const samples = [];

@@ -273,6 +273,9 @@ async function boot() {
     return;
   }
   el("corpus-count").textContent = state.corpus.samples.length;
+  const famCount = new Set(state.corpus.samples.map((s) => s.family)).size;
+  const famEl = el("family-count");
+  if (famEl) famEl.textContent = famCount;
   renderExamples();
   initSettings();
 
