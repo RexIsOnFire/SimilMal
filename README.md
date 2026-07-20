@@ -24,26 +24,47 @@ For a given SHA256:
 Each sample is a set of feature groups. SimilMal scores each group independently, then combines them
 with the weights declared in the dataset (`feature_weights`):
 
-| Feature   | Weight | Method                          |
-|-----------|--------|---------------------------------|
-| Functions | 0.30   | blended Jaccard + containment   |
-| Imports   | 0.25   | blended Jaccard + containment   |
-| Strings   | 0.25   | blended Jaccard + containment   |
-| Resources | 0.10   | blended Jaccard + containment   |
-| Compiler  | 0.10   | toolchain-family match          |
+| Feature   | Weight | Method                                                  |
+|-----------|--------|--------------------------------------------------------|
+| Imphash   | 0.30   | exact match — identical import-table hash = 1.0         |
+| Imports   | 0.25   | blended Jaccard + containment                          |
+| Functions | 0.15   | blended Jaccard + containment                          |
+| Strings   | 0.15   | blended Jaccard + containment                          |
+| Resources | 0.05   | blended Jaccard + containment                          |
+| Compiler  | 0.10   | toolchain-family match (broad, versionless = weak)     |
 
 Set similarity blends **Jaccard** (`|A∩B| / |A∪B|`) with the **containment coefficient**
-(`|A∩B| / min(|A|,|B|)`) as `0.6·jaccard + 0.4·containment`. Containment stops a small sample that is
-fully contained in a much larger one from scoring near-zero just because of size. The math lives in
-[`js/similarity.js`](js/similarity.js) and is fully transparent and explainable.
+(`|A∩B| / min(|A|,|B|)`) as `0.6·jaccard + 0.4·containment`.
+
+Two rules keep the score honest, especially for sparse live samples:
+
+- **Absence of evidence is not evidence.** A feature that is empty on *both* sides (e.g. neither
+  sample exposes disassembled functions) is excluded from the average and the weights are
+  renormalized over the features that actually carry data. The UI reports the resulting *coverage*.
+  (Without this, two samples that merely both lacked imports scored a false 100% on imports — which
+  made every metadata-only lookup collapse onto the one corpus entry that also had no imports.)
+- **Imphash is the strongest real signal.** Two PE files with the same imphash have an identical
+  import table — a genuine same-toolkit / same-builder fingerprint that real malware clustering
+  relies on. A shared broad compiler (e.g. "both MSVC") is treated as weak, since most Windows
+  malware is MSVC.
+
+The math lives in [`js/similarity.js`](js/similarity.js) and is fully transparent and explainable.
 
 ## Where the data comes from
 
-**Bundled corpus (default).** `data/dataset.b64.json` ships a curated set of well-known malware family
-profiles (WannaCry, NotPetya, Emotet, TrickBot, Cobalt Strike, AgentTesla, Mirai, Ryuk, Conti, Zeus,
-and more). Published SHA256 hashes are used where available; the feature vectors are analyst-curated
-approximations compiled from public reporting — this is a teaching/demonstration corpus, not a live
-sandbox dump.
+**Bundled corpus (default).** `data/dataset.b64.json` is built from **real MalwareBazaar (abuse.ch)
+data** — genuine recent samples across ~16 families (WannaCry, AgentTesla, Vidar, RemcosRAT, Formbook,
+AsyncRAT, njRAT, Stealc, RedLine, Amadey, Rhadamanthys, GuLoader, Quasar, NanoCore, SnakeKeylogger,
+Mirai, …), each with its **real SHA256, imphash, tlsh, signature and compiler hint**. It is generated
+by [`tools/build-corpus.mjs`](tools/build-corpus.mjs) from MalwareBazaar's public recent CSV feed —
+no fabricated hashes or invented features. MalwareBazaar does not publish disassembled functions or
+extracted strings, so those feature sets are empty and matching leans on imphash + compiler (plus
+imports/strings where present). Regenerate any time with:
+
+```bash
+node tools/build-corpus.mjs <yourProxyWorkerUrl>   # writes data/dataset.json
+node tools/encode-dataset.mjs                       # -> data/dataset.b64.json
+```
 
 **Live lookup (optional).** For a hash not in the corpus, SimilMal can query
 **MalwareBazaar (abuse.ch)** live — through a small proxy you deploy (see below).

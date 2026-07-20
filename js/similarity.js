@@ -105,25 +105,43 @@ export function compilerScore(aComp, bComp) {
   if (a.version && b.version) {
     return a.version === b.version
       ? { score: 1, present: true, note: "same toolchain + version" }
-      : { score: 0.75, present: true, note: "same toolchain, different version" };
+      : { score: 0.6, present: true, note: "same toolchain, different version" };
   }
-  return { score: 0.9, present: true, note: "same toolchain family" };
+  // Same BROAD family with no version detail (e.g. both "MSVC (unknown)") is
+  // weak evidence — most Windows malware is MSVC, so sharing it says little.
+  // Score it low so it can't, on its own, push unrelated samples to a high match.
+  return { score: 0.25, present: true, note: "same broad toolchain (weak signal)" };
+}
+
+// imphash is a hash of a PE's import table: two files with the SAME imphash have
+// an identical set/order of imported functions — a very strong same-toolkit /
+// same-family signal that real malware clustering relies on. It is an exact
+// scalar match: equal = 1.0, different = 0, missing on either side = no evidence
+// (present=false, excluded from the average).
+export function imphashScore(aImp, bImp) {
+  const a = normalizeToken(aImp);
+  const b = normalizeToken(bImp);
+  if (!a || !b || a === "n/a" || b === "n/a")
+    return { score: 0, present: false, shared: [], note: "imphash missing on one side" };
+  if (a === b) return { score: 1, present: true, shared: [a], note: "identical imphash (same import table)" };
+  return { score: 0, present: true, shared: [], note: "different imphash" };
 }
 
 // Compare two samples, returning the overall percentage plus the per-feature
 // breakdown the UI renders.
 export function compareSamples(query, candidate, weights) {
   const w = weights || {
-    functions: 0.3, imports: 0.25, strings: 0.25, resources: 0.1, compiler: 0.1,
+    imphash: 0.3, imports: 0.25, functions: 0.15, strings: 0.15, resources: 0.05, compiler: 0.1,
   };
 
+  const imphash = imphashScore(query.imphash, candidate.imphash);
   const functions = setScore(query.functions, candidate.functions);
   const imports = setScore(mergeImports(query), mergeImports(candidate));
   const strings = setScore(query.strings, candidate.strings);
   const resources = setScore(query.resources, candidate.resources);
   const compiler = compilerScore(query.compiler, candidate.compiler);
 
-  const parts = { functions, imports, strings, resources, compiler };
+  const parts = { imphash, functions, imports, strings, resources, compiler };
 
   // Only features present (carrying evidence) on BOTH sides count toward the
   // score, and the weights are renormalized over just those. This means a

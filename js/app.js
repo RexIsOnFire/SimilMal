@@ -65,13 +65,15 @@ function renderExamples() {
 function featureRow(label, part, kind) {
   const shared = part.shared || [];
   const pctScore = part.score;
+  const noteKind = kind === "compiler" || kind === "imphash";
   const chips = shared
     .slice(0, 40)
     .map((s) => `<span class="tag">${esc(s)}</span>`)
     .join("");
   const more = shared.length > 40 ? `<span class="tag muted">+${shared.length - 40} more</span>` : "";
-  const meta =
-    kind === "compiler"
+  const meta = !part.present
+    ? `<span class="feat-note">not compared — no data on one side</span>`
+    : noteKind
       ? `<span class="feat-note">${esc(part.note || "")}</span>`
       : `<span class="feat-note">${shared.length} shared · Jaccard ${pct(part.jaccard)} · containment ${pct(part.containment)}</span>`;
 
@@ -129,8 +131,9 @@ function renderTopMatch(query, result, familyGuess, sourceInfo) {
 
     <h3 class="section-h">Feature breakdown</h3>
     <div class="features">
-      ${featureRow("Shared functions", p.functions, "functions")}
+      ${featureRow("Imphash (import table)", p.imphash, "imphash")}
       ${featureRow("Imports", p.imports, "imports")}
+      ${featureRow("Shared functions", p.functions, "functions")}
       ${featureRow("Shared strings", p.strings, "strings")}
       ${featureRow("Shared resources", p.resources, "resources")}
       ${featureRow("Compiler", p.compiler, "compiler")}

@@ -74,14 +74,17 @@ function mbRecordToProfile(rec) {
     type: tags[0] || rec.file_type || "Unknown",
     first_seen: rec.first_seen || null,
     compiler: guessCompilerFromMb(rec),
-    arch: rec.architecture || String(rec.file_type || "").toUpperCase(),
+    arch: rec.file_arch || String(rec.file_type || "").toUpperCase(),
+    imphash: rec.imphash && rec.imphash !== "n/a" ? rec.imphash : null,
     imports,
     imported_functions: importedFns,
     functions: [], // not provided by MalwareBazaar metadata
     strings,
     resources: [],
     _source: "malwarebazaar",
-    _partial: importedFns.length === 0 && imports.length === 0,
+    // "partial" = no strong structural feature to match on. With a real imphash
+    // we DO have a strong signal, so only flag partial when even that is absent.
+    _partial: !rec.imphash || rec.imphash === "n/a",
   };
 }
 
