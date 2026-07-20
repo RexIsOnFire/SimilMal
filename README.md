@@ -110,14 +110,6 @@ python3 -m http.server 8080
 
 Any static server works (`npx serve`, `php -S`, etc.).
 
-## Deploy to GitHub Pages
-
-1. Push this repository to GitHub.
-2. In **Settings → Pages**, set the source to **GitHub Actions**.
-3. The included workflow ([`.github/workflows/deploy.yml`](.github/workflows/deploy.yml)) validates the
-   corpus and publishes the site on every push to `main`.
-
-The `.nojekyll` file ensures GitHub serves the `js/`, `css/`, and `data/` folders untouched.
 
 ## Why the dataset is base64-encoded
 
