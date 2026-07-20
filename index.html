@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SimilMal — Malware Similarity Engine</title>
+  <meta name="description" content="Static, in-browser malware similarity engine. Enter a SHA256, get the closest family, shared functions, strings, resources, imports and compiler." />
+  <link rel="stylesheet" href="./css/styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">◈</span>
+      <div>
+        <h1>SimilMal</h1>
+        <p class="tagline">Malware similarity engine — like "similar repositories", for malware</p>
+      </div>
+    </div>
+    <button id="settings-btn" class="ghost-btn" title="API settings">Settings</button>
+  </header>
+
+  <main>
+    <section class="search-card">
+      <label for="hash-input" class="input-label">SHA256</label>
+      <div class="search-row">
+        <input
+          id="hash-input"
+          type="text"
+          spellcheck="false"
+          autocomplete="off"
+          placeholder="e.g. ed01ebfbc9eb5bbea545af4d01bf5f1071661840480439c6e5babe8e080e41aa"
+        />
+        <button id="analyze-btn" class="primary-btn">Analyze</button>
+      </div>
+
+      <div class="options-row">
+        <label class="checkbox">
+          <input type="checkbox" id="prefer-live" />
+          <span>Prefer live lookup (MalwareBazaar, needs your API key)</span>
+        </label>
+      </div>
+
+      <div class="examples-block">
+        <span class="examples-label">Try a known sample:</span>
+        <div id="examples" class="chips"></div>
+      </div>
+
+      <p class="corpus-note">
+        Bundled reference corpus: <strong id="corpus-count">0</strong> curated malware family profiles.
+        Everything runs in your browser — no upload, no backend.
+      </p>
+    </section>
+
+    <div id="message" class="message hidden"></div>
+
+    <section id="empty" class="empty-state">
+      <p>Enter a SHA256 above to find the most similar known malware.</p>
+    </section>
+
+    <section id="result" class="result hidden"></section>
+
+    <section id="similar-wrap" class="similar-wrap hidden">
+      <h3 class="section-h">Similar samples</h3>
+      <div id="similar-list" class="similar-list"></div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <p>
+      SimilMal is an educational, static demonstration. Similarity is computed with a weighted
+      multi-feature Jaccard/containment model over a curated offline corpus. It is not a substitute
+      for a sandbox or professional malware analysis platform.
+    </p>
+  </footer>
+
+  <dialog id="settings" class="settings-dialog">
+    <form method="dialog">
+      <h2>API settings</h2>
+      <p class="dialog-help">
+        SimilMal can attempt a live lookup on <strong>MalwareBazaar (abuse.ch)</strong> for hashes not
+        in the bundled corpus. This needs <em>your own</em> Auth-Key, stored only in this browser
+        (<code>localStorage</code>) and never sent anywhere except MalwareBazaar. Browser access also
+        depends on MalwareBazaar allowing cross-origin requests; if it doesn't, SimilMal falls back to
+        the bundled corpus.
+      </p>
+      <label for="api-key" class="input-label">MalwareBazaar Auth-Key</label>
+      <input id="api-key" type="password" spellcheck="false" autocomplete="off" placeholder="paste your key" />
+      <div class="dialog-actions">
+        <button id="save-key" type="button" class="primary-btn">Save</button>
+        <button id="settings-close" type="button" class="ghost-btn">Close</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script type="module" src="./js/app.js"></script>
+</body>
+</html>

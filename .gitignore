@@ -1,0 +1,10 @@
+# Plaintext datasets are kept out of the repo because their malware indicator
+# strings trip antivirus false positives (e.g. Bitdefender Generic.RYUK.*).
+# The app ships and loads the base64-encoded data/dataset.b64.json instead.
+data/corpus.json
+data/dataset.json
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+*.swp
