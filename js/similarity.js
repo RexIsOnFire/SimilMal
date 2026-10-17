@@ -118,43 +118,54 @@ export function compilerScore(aComp, bComp) {
 // similar two files are, even when not identical. This is what lets a sample
 // with a unique imphash still score meaningful similarity to near-neighbors.
 //
-// We compute the standard TLSH diff (approximation): header terms (length +
-// Q-ratio bytes) plus the body distance, where each of the 128 2-bit buckets
-// contributes 0/1/2/6 by absolute difference (the canonical TLSH weighting).
-// Distance 0 = identical; typical "related" files are < 100; unrelated are
+// The distance is Trend Micro's reference TLSH diff (tlsh_impl.cpp, diff_total
+// with length), for the standard digest: "T1" + 70 hex = checksum byte, L byte,
+// Q byte (two 4-bit ratios), then 32 body bytes = 128 two-bit buckets.
+//   checksum differs        +1
+//   L (log file length)      circular diff d: 0, 1, or d*12
+//   Q1, Q2 ratios            circular diff d: d if d<=1, else (d-1)*12
+//   each body bucket         |a-b|, except 3 costs 6
+// In the hex digest the header bytes are nibble-swapped. Verified against
+// py-tlsh's tlsh.diff on 300 real pairs from this corpus (exact match).
+// Distance 0 = identical; related files are typically < 100, unrelated ones
 // several hundred. We map distance to a 0..1 similarity with a soft curve.
-function hexPairs(body) {
-  // each hex char is a 2-bit-pair nibble; TLSH body buckets are 2 bits each,
-  // i.e. 4 buckets per byte / 2 per hex char. We compare per hex nibble using
-  // the canonical mod-difference table for robustness without full bit unpack.
-  const vals = [];
-  for (let i = 0; i < body.length; i++) {
-    const n = parseInt(body[i], 16);
-    if (Number.isNaN(n)) return null;
-    // split nibble into two 2-bit buckets
-    vals.push((n >> 2) & 0x3, n & 0x3);
-  }
-  return vals;
+const TLSH_HEX_LEN = 70;
+
+function hexBytes(hex) {
+  if (!/^[0-9a-f]+$/.test(hex) || hex.length % 2) return null;
+  const out = [];
+  for (let i = 0; i < hex.length; i += 2) out.push(parseInt(hex.slice(i, i + 2), 16));
+  return out;
 }
 
-function bucketDiff(a, b) {
-  const d = Math.abs(a - b);
-  return d === 3 ? 6 : d; // canonical TLSH: diff of 3 costs 6, else the diff
+function modDiff(x, y, range) {
+  const d = Math.abs(x - y);
+  return Math.min(d, range - d);
+}
+
+const swapNibbles = (b) => ((b & 0x0f) << 4) | (b >> 4);
+
+function bucketDistance(a, b) {
+  let dist = 0;
+  for (let shift = 0; shift < 8; shift += 2) {
+    const d = Math.abs(((a >> shift) & 3) - ((b >> shift) & 3));
+    dist += d === 3 ? 6 : d;
+  }
+  return dist;
 }
 
 export function tlshDistance(aHash, bHash) {
-  const a = normalizeToken(aHash).replace(/^t1/, "");
-  const b = normalizeToken(bHash).replace(/^t1/, "");
-  if (a.length < 70 || b.length < 70 || a.length !== b.length) return null;
-  // header: first 6 hex = checksum(2) + length(2) + qratios(2). Compare length
-  // and qratio nibbles; skip the checksum (position-only, not similarity).
-  let dist = 0;
-  const lenA = parseInt(a.slice(2, 4), 16), lenB = parseInt(b.slice(2, 4), 16);
-  dist += Math.min(Math.abs(lenA - lenB), 256) * 1;
-  const bodyA = hexPairs(a.slice(6));
-  const bodyB = hexPairs(b.slice(6));
-  if (!bodyA || !bodyB) return null;
-  for (let i = 0; i < bodyA.length; i++) dist += bucketDiff(bodyA[i], bodyB[i]);
+  const a = hexBytes(normalizeToken(aHash).replace(/^t1/, ""));
+  const b = hexBytes(normalizeToken(bHash).replace(/^t1/, ""));
+  if (!a || !b || a.length * 2 !== TLSH_HEX_LEN || b.length * 2 !== TLSH_HEX_LEN) return null;
+  let dist = a[0] === b[0] ? 0 : 1;
+  const ldiff = modDiff(swapNibbles(a[1]), swapNibbles(b[1]), 256);
+  dist += ldiff <= 1 ? ldiff : ldiff * 12;
+  for (const shift of [0, 4]) {
+    const qdiff = modDiff((a[2] >> shift) & 0x0f, (b[2] >> shift) & 0x0f, 16);
+    dist += qdiff <= 1 ? qdiff : (qdiff - 1) * 12;
+  }
+  for (let i = 3; i < a.length; i++) dist += bucketDistance(a[i], b[i]);
   return dist;
 }
 

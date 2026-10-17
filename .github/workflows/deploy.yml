@@ -24,6 +24,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Similarity engine tests (TLSH vs. the reference implementation)
+        run: node --test tests/similarity.test.mjs
+
       - name: Validate dataset (base64 payload decodes to valid JSON)
         run: |
           python3 -c "import json,base64,sys; w=json.load(open('data/dataset.b64.json')); d=json.loads(base64.b64decode(w['payload'])); n=len(d['samples']); print(f'dataset OK: {n} samples'); sys.exit(0 if n>0 else 1)"
